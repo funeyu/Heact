@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <title></title>
+</head>
+<body>
+
+<div id="root"></div> 
+<script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+<script>
+
+  // FiberTag :
+  const HostRoot = 1;
+  const HostComponent = 2;
+  const ClassComponent = 4;
+
+ const DOM = {
+  insertBefore: function(parentInstance, child, beforeChild) {
+   parentInstance.insertBefore(child, beforeChild);
+  },
+
+  appendChild: function(parentInstance, child) {
+   parentInstance.appendChild(child);
+  },
+
+  removeChild: function(parentInstance, child) {
+   parentInstance.removeChild(child);
+  },
+
+ }
+
+ var createElement = function(type, config, ...children) {
+
+  return {
+   type,
+   config,
+   children
+  }
+ }
+
+ var createFiber = function(parentNode, children, tag, type, parent) {
+  let fiber = {
+     parentNode, // 记录该fiber stateNode的父stateNode节点
+     defferedDomRefer: { // 这个主要记载该fiber对应的dom节点，用来传给child作为parentNode的引用
+          domInstance: null
+        }, 
+      tag,
+      type,
+      child: 0,
+      index: 0,
+      sibling: null,
+      return: parent,
+      props: { children },
+      effectTag: null,
+      alternate: null,
+      stateNode: null,
+      // effect
+      firstEffect: null,
+      lastEffect: null,
+  }
+  if(parent) {
+   parent.child = fiber;
+  }
+   return fiber;
+  }
+
+ var createFiberFromElement = function(element, index, returnFiber) {
+   return createFiber(null, element.children, HostComponent, element.type, returnFiber);
+ }
+
+ function reconcileChildren(current, returnFiber, parentDom) {
+   let children = returnFiber.props.children;
+   let firstCreatingFiber;
+   let preFiber;
+
+   if(!current) {
+     for(let i = 0; i < children.length; i ++) {
+      if(typeof children[i] === 'string') { // 如果是text就直接返回
+        returnFiber.firstEffect = returnFiber.lastEffect = {
+          parentDom: returnFiber.defferedDomRefer,
+          type: 'APPEND',
+          dom: document.createTextNode(children[i])
+        }
+        return null;
+      }
+       let newFiber = createFiberFromElement(children[i], i, returnFiber);
+       newFiber.parentDom = parentDom;
+
+       if(!preFiber) {
+         firstCreatingFiber = newFiber;
+       }
+       if(preFiber) {
+         preFiber.sibling = newFiber;
+       }
+
+       preFiber = newFiber;
+     }
+
+    returnFiber.child = firstCreatingFiber
+    return firstCreatingFiber;
+   }
+  }
+
+ class Component {
+
+ }
+
+ function createRootFiber(rootContainer, element) {
+  let fiber = {
+      parentNode: null, // 记录该fiber stateNode的父stateNode节点
+      defferedDomRefer: { // 这个主要记载该fiber对应的dom节点，用来传给child作为parentNode的引用
+        domInstance: rootContainer
+      }, 
+      tag: null,
+      type: 'root',
+      child: null,
+      index: 0,
+      sibling: 0,
+      return: null,
+      props: { children: [element] },
+      effectTag: null,
+      alternate: null,
+      stateNode: null,
+      // effect
+      firstEffect: null,
+      lastEffect: null,
+  }
+  return fiber
+ }
+
+ const FinishedEffect = 0;
+ const WorkingEffect = 1;
+
+ function isFinishedFiber(fiber) {
+  return fiber.effectTag === FinishedEffect;
+ }
+
+ function markFiberAsDone(fiber) {
+  fiber.effectTag = FinishedEffect;
+ }
+
+ function completeFiber(fiber) {
+
+  console.log('fiber', fiber.children)
+  let returnFiber = fiber.return;
+  if(!returnFiber) return;
+
+  if(typeof fiber.children === 'string') {
+    const textNode = document.createTextNode(fiber.children);
+    const newEffect = {
+      parentDom: fiber.defferedDomRefer.domInstance,
+      type: 'APPEND',
+      dom: textNode
+    }
+    fiber.firstEffect = fiber.lastEffect = newEffect;
+    // 将该effect 追加到return Fiber
+    if(returnFiber) {
+      console.log('firstEffect', newEffect)
+      if(returnFiber.firstEffect === null) {
+        returnFiber.firstEffect = returnFiber.lastEffect = newEffect;
+      } else {
+        console.log('returnFiber', returnFiber)
+        returnFiber.lastEffect.next = newEffect;
+        returnFiber.lastEffect = newEffect;
+      }
+    }
+    return;
+  }
+
+
+  let domInstance;
+  if(typeof fiber.type === 'string') {
+    domInstance = document.createElement(fiber.type);
+    fiber.defferedDomRefer.domInstance = domInstance;
+    const nEffect = {
+      parentDom: returnFiber.defferedDomRefer,
+      type: 'APPEND',
+      dom: domInstance
+    }
+    if(fiber.firstEffect === null) {
+      fiber.firstEffect = fiber.lastEffect = nEffect;
+    } else {
+      fiber.lastEffect.next = nEffect;
+      fiber.lastEffect = nEffect;
+    }
+    if(returnFiber.lastEffect === null) {
+      returnFiber.firstEffect = fiber.firstEffect;
+      returnFiber.lastEffect = fiber.lastEffect;
+    } else {
+      returnFiber.lastEffect.next = fiber.firstEffect;
+      returnFiber.lastEffect = fiber.lastEffect;
+    }
+  }
+
+ }
+
+ var HeactDOM = function() {}
+
+ var markFiberChildrenDone = function(fiber) {
+  fiber.childsEffect = FinishedEffect;
+ }
+
+ var isChildsFinished = function(fiber) {
+  return fiber.childsEffect === FinishedEffect;
+ }
+
+const commitEffect = function(effect) {
+  let {parentDom, dom, type} = effect; 
+  switch(type) {
+    case 'APPEND':
+      parentDom.domInstance.appendChild(dom);
+    default:
+      break;
+  }
+}
+
+HeactDOM.commit = function(firstEffect) {
+  let nextEffect = firstEffect;
+  while(nextEffect != null) {
+    commitEffect(nextEffect);
+    nextEffect = nextEffect.next;
+  }
+}
+
+ HeactDOM.render = function(element, root) {
+
+  let rootFiber = createRootFiber(root, element);
+  let parentDom = {
+    domInstance: root
+  };
+  fiber = rootFiber;
+  let i = 0;
+  while(fiber != null) {
+   if(!isChildsFinished(fiber)) {
+    console.log('fiber.props.children', fiber.props.children)
+    let children = fiber.props.children;
+    if(Array.isArray(children)) {
+     let childFiber = reconcileChildren(null, fiber, parentDom);
+
+     if(childFiber === null) {
+      completeFiber(fiber);
+      if(fiber.sibling) {
+       fiber = fiber.sibling;
+       continue;
+      } else {
+        fiber = fiber.return;
+        if(fiber) {
+          markFiberChildrenDone(fiber)
+        }
+      }
+     } else {
+      parentDom = fiber.defferedDomRefer;
+      fiber = fiber.child
+     }
+    }
+   } else {
+      completeFiber(fiber);
+      if(fiber.sibling) {
+        fiber = fiber.sibling;
+        continue;
+      }
+      fiber = fiber.return;
+      if(fiber) {
+        markFiberChildrenDone(fiber);
+      }
+   }
+  }
+
+  HeactDOM.commit(rootFiber.firstEffect);
+ }
+
+
+</script>
+<script type="text/jsx" data-presets="es2016, react">
+ /** @jsx createElement */
+
+ let a  = <div>
+    <p>div1</p>
+    <span>span</span>
+    <div>
+      <span>innerSpan</span>
+    </div>
+  </div>;
+ console.log(a);
+
+ HeactDOM.render(a, document.getElementById('root'))
+</script>
+</body>
+
+</html>
