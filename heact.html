@@ -29,7 +29,28 @@
 
  }
 
+/**
+这里注意：如果是this.props.children = <div>app</div>
+<div>{this.props.children}</div> =>createElement后得到的是:
+{
+  type: 'div',
+  config: null,
+  children: [
+    [
+      {
+        type: 'div',
+        config: null,
+        children: ['app']
+      }
+    ],
+  ]
+}
+*/
+
  var createElement = function(type, config, ...children) {
+  if(children.length === 1 && !children[0]) {
+    children = null;
+  }
 
   return {
    type,
@@ -40,13 +61,12 @@
 
  var createFiber = function(parentNode, children, tag, type, parent) {
   let fiber = {
-     parentNode, // 记录该fiber stateNode的父stateNode节点
      defferedDomRefer: { // 这个主要记载该fiber对应的dom节点，用来传给child作为parentNode的引用
           domInstance: null
         }, 
       tag,
       type,
-      child: 0,
+      child: null,
       index: 0,
       sibling: null,
       return: parent,
@@ -68,11 +88,30 @@
    return createFiber(null, element.children, HostComponent, element.type, returnFiber);
  }
 
- function reconcileChildren(current, returnFiber, parentDom) {
-   let children = returnFiber.props.children;
+var createComponentFiber= function(type, children, returnFiber) {
+  const fiber = createFiber(null, children, ClassComponent, type, returnFiber);
+  // todo props not only children
+  // fiber.stateNode = new type({props: children});
+  returnFiber.child = fiber;
+  return fiber;
+}
+
+function LevelUpChildren(children) {
+  if(Array.isArray(children) && children[0]
+  && children.length === 1 && Array.isArray(children[0])) {
+    return children[0];
+  } 
+
+  return children;
+}
+
+ function reconcileChildren(current, returnFiber, children, parentDom) {
+
    let firstCreatingFiber;
    let preFiber;
 
+  children = LevelUpChildren(children);
+  console.log('reconcileChildren', children)
    if(!current) {
      for(let i = 0; i < children.length; i ++) {
       if(typeof children[i] === 'string') { // 如果是text就直接返回
@@ -83,7 +122,15 @@
         }
         return null;
       }
-       let newFiber = createFiberFromElement(children[i], i, returnFiber);
+      let newFiber;
+      if(children[i] && typeof children[i].type === 'function') {
+        console.log('child', children[i]);
+        newFiber = createComponentFiber(children[i].type, children[i].children, returnFiber);
+        // defferedDomRefer指向父,供其child读取作为parentDom的值
+        newFiber.defferedDomRefer = parentDom;
+      } else {
+        newFiber = createFiberFromElement(children[i], i, returnFiber);
+      }
        newFiber.parentDom = parentDom;
 
        if(!preFiber) {
@@ -141,7 +188,6 @@
 
  function completeFiber(fiber) {
 
-  console.log('fiber', fiber.children)
   let returnFiber = fiber.return;
   if(!returnFiber) return;
 
@@ -155,11 +201,9 @@
     fiber.firstEffect = fiber.lastEffect = newEffect;
     // 将该effect 追加到return Fiber
     if(returnFiber) {
-      console.log('firstEffect', newEffect)
       if(returnFiber.firstEffect === null) {
         returnFiber.firstEffect = returnFiber.lastEffect = newEffect;
       } else {
-        console.log('returnFiber', returnFiber)
         returnFiber.lastEffect.next = newEffect;
         returnFiber.lastEffect = newEffect;
       }
@@ -167,6 +211,18 @@
     return;
   }
 
+  // to do component lifeCycles
+  if(typeof fiber.type === 'function') {
+    console.log('function complete', fiber)
+
+    if(returnFiber.lastEffect === null) {
+      returnFiber.firstEffect = fiber.firstEffect;
+      returnFiber.lastEffect = fiber.lastEffect;
+    } else {
+      returnFiber.lastEffect.next = fiber.firstEffect;
+      returnFiber.lastEffect = fiber.lastEffect;
+    }
+  }
 
   let domInstance;
   if(typeof fiber.type === 'string') {
@@ -206,11 +262,30 @@
 
 const commitEffect = function(effect) {
   let {parentDom, dom, type} = effect; 
+  console.log('effect', effect);
   switch(type) {
     case 'APPEND':
       parentDom.domInstance.appendChild(dom);
     default:
       break;
+  }
+}
+
+const updateComponent = function(current, fiber, parentDom) {
+  if(!current) {
+    // todo props not only children
+    console.log('fiber.props', fiber.props);
+    fiber.stateNode = new fiber.type(fiber.props);
+    let renderChild = fiber.stateNode.render();
+    let child;
+    if(Array.isArray(renderChild)) {
+      child = reconcileChildren(null, fiber, renderChild, parentDom);
+    } 
+    // html元素的情况
+    else if(typeof renderChild === 'object' && typeof renderChild.type === 'string'){
+      child = createFiberFromElement(renderChild, 0, fiber);
+    }
+    return child;
   }
 }
 
@@ -229,13 +304,29 @@ HeactDOM.commit = function(firstEffect) {
     domInstance: root
   };
   fiber = rootFiber;
-  let i = 0;
+
   while(fiber != null) {
    if(!isChildsFinished(fiber)) {
-    console.log('fiber.props.children', fiber.props.children)
+    if(fiber.tag === ClassComponent) {
+      let childFiber = updateComponent(null, fiber, parentDom);
+      if(childFiber === null) {
+        completeFiber(fiber);
+        if(fiber.sibling) {
+          fiber = fiber.sibling;
+          continue;
+        } else {
+          fiber = fiber.return;
+          continue;
+        }
+      } else {
+        fiber.child = childFiber;
+        fiber = childFiber;
+        continue;
+      }
+    }
     let children = fiber.props.children;
     if(Array.isArray(children)) {
-     let childFiber = reconcileChildren(null, fiber, parentDom);
+     let childFiber = reconcileChildren(null, fiber, children, parentDom);
 
      if(childFiber === null) {
       completeFiber(fiber);
@@ -249,8 +340,8 @@ HeactDOM.commit = function(firstEffect) {
         }
       }
      } else {
-      parentDom = fiber.defferedDomRefer;
-      fiber = fiber.child
+      parentDom = childFiber.defferedDomRefer;
+      fiber = childFiber;
      }
     }
    } else {
@@ -274,16 +365,31 @@ HeactDOM.commit = function(firstEffect) {
 <script type="text/jsx" data-presets="es2016, react">
  /** @jsx createElement */
 
- let a  = <div>
-    <p>div1</p>
-    <span>span</span>
-    <div>
-      <span>innerSpan</span>
-    </div>
-  </div>;
- console.log(a);
+ class App {
+   constructor(props) {
+     this.props = props;
+   }
 
- HeactDOM.render(a, document.getElementById('root'))
+   render() {
+     return (
+       <div>
+         <p>App</p>
+         <div>{this.props.children}</div>
+         <div>测试1</div>
+      </div>
+       )
+   }
+ }
+
+ let app = 
+ <div>
+   <p>p的值</p>
+    <App>
+        <div>innerApp</div>
+      </App>
+ </div>
+
+ HeactDOM.render(app, document.getElementById('root'))
 </script>
 </body>
 
